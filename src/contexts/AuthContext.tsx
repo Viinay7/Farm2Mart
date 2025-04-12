@@ -1,14 +1,22 @@
-
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { 
+  createUserWithEmailAndPassword, 
+  signInWithEmailAndPassword, 
+  signOut,
+  onAuthStateChanged,
+  updateProfile as firebaseUpdateProfile,
+  User as FirebaseUser
+} from "firebase/auth";
+import { doc, setDoc, getDoc, updateDoc } from "firebase/firestore";
+import { auth, db } from "@/lib/Firebase";
 
-type UserRole = 'farmer' | 'buyer' | null;
-
+// Define user type
 interface User {
-  id: string;
+  uid: string;
   name: string;
   email: string;
-  role: UserRole;
+  role?: 'farmer' | 'buyer' | 'admin';
   address?: string;
   phone?: string;
   joinDate?: string;
@@ -18,104 +26,91 @@ interface AuthContextType {
   user: User | null;
   isAuthenticated: boolean;
   login: (email: string, password: string) => Promise<void>;
-  signup: (name: string, email: string, password: string, role: UserRole) => Promise<void>;
-  logout: () => void;
-  updateProfile?: (profileData: Partial<User>) => Promise<void>;
+  signup: (name: string, email: string, password: string, role: 'farmer' | 'buyer') => Promise<void>;
+  logout: () => Promise<void>;
+  updateProfile: (profileData: Partial<User>) => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [loading, setLoading] = useState(true);
   const navigate = useNavigate();
-  
-  // Check if user is already logged in
+
+  // Listen for auth state changes
   useEffect(() => {
-    const storedUser = localStorage.getItem('farm-user');
-    if (storedUser) {
-      setUser(JSON.parse(storedUser));
-    }
-  }, []);
-  
-  const login = async (email: string, password: string) => {
-    // In a real app, this would be an API call
-    // For now we'll simulate authentication
-    try {
-      // Simulate API delay
-      await new Promise(resolve => setTimeout(resolve, 1000));
-      
-      // Check if user exists in local storage (simulating a database)
-      const storedUsers = JSON.parse(localStorage.getItem('farm-users') || '[]');
-      const foundUser = storedUsers.find((u: any) => u.email === email);
-      
-      if (!foundUser || foundUser.password !== password) {
-        throw new Error('Invalid credentials');
-      }
-      
-      // Create sanitized user object (remove password)
-      const authenticatedUser = {
-        id: foundUser.id,
-        name: foundUser.name,
-        email: foundUser.email,
-        role: foundUser.role,
-        joinDate: foundUser.joinDate || new Date().toISOString().split('T')[0]
-      };
-      
-      setUser(authenticatedUser);
-      localStorage.setItem('farm-user', JSON.stringify(authenticatedUser));
-      
-      // Redirect based on role
-      if (foundUser.role === 'farmer') {
-        navigate('/farmer-dashboard');
+    const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
+      if (firebaseUser) {
+        try {
+          await fetchAndSetUserData(firebaseUser);
+        } catch (error) {
+          console.error("Error fetching user data:", error);
+          setUser(null);
+          setIsAuthenticated(false);
+        }
       } else {
-        navigate('/buyer-dashboard');
+        setUser(null);
+        setIsAuthenticated(false);
       }
-    } catch (error) {
-      console.error('Login failed:', error);
-      throw error;
+      setLoading(false);
+    });
+
+    // Cleanup subscription
+    return () => unsubscribe();
+  }, []);
+
+  const fetchAndSetUserData = async (firebaseUser: FirebaseUser) => {
+    // Get additional user data from Firestore
+    const userDocRef = doc(db, 'users', firebaseUser.uid);
+    const userDoc = await getDoc(userDocRef);
+    
+    if (userDoc.exists()) {
+      const userData = userDoc.data();
+      const formattedUser = {
+        uid: firebaseUser.uid,
+        name: userData.name || firebaseUser.displayName || 'User',
+        email: userData.email || firebaseUser.email || '',
+        role: userData.role,
+        address: userData.address,
+        phone: userData.phone,
+        joinDate: userData.createdAt ? new Date(userData.createdAt).toISOString().split('T')[0] : new Date().toISOString().split('T')[0],
+      };
+      setUser(formattedUser);
+      setIsAuthenticated(true);
+    } else {
+      // Fallback to just Firebase auth data if Firestore data not found
+      setUser({
+        uid: firebaseUser.uid,
+        name: firebaseUser.displayName || 'User',
+        email: firebaseUser.email || '',
+      });
+      setIsAuthenticated(true);
     }
   };
-  
-  const signup = async (name: string, email: string, password: string, role: UserRole) => {
+
+  const signup = async (name: string, email: string, password: string, role: 'farmer' | 'buyer') => {
     try {
-      // Simulate API delay
-      await new Promise(resolve => setTimeout(resolve, 1000));
-      
-      // Get existing users or initialize empty array
-      const storedUsers = JSON.parse(localStorage.getItem('farm-users') || '[]');
-      
-      // Check if email already exists
-      if (storedUsers.some((u: any) => u.email === email)) {
-        throw new Error('Email already in use');
-      }
-      
-      const joinDate = new Date().toISOString().split('T')[0];
-      
-      // Create new user
-      const newUser = {
-        id: `user-${Date.now()}`,
+      const userCredential = await createUserWithEmailAndPassword(auth, email, password);
+      const firebaseUser = userCredential.user;
+
+      // Set display name in Firebase Auth
+      await firebaseUpdateProfile(firebaseUser, {
+        displayName: name,
+      });
+
+      // Save user info to Firestore
+      await setDoc(doc(db, "users", firebaseUser.uid), {
+        uid: firebaseUser.uid,
         name,
         email,
-        password, // In a real app, this would be hashed
         role,
-        joinDate
-      };
-      
-      // Save to "database" (localStorage)
-      storedUsers.push(newUser);
-      localStorage.setItem('farm-users', JSON.stringify(storedUsers));
-      
-      // Create sanitized user object for session
-      const authenticatedUser = {
-        id: newUser.id,
-        name: newUser.name,
-        email: newUser.email,
-        role: newUser.role,
-        joinDate: newUser.joinDate
-      };
-      
-      setUser(authenticatedUser);
-      localStorage.setItem('farm-user', JSON.stringify(authenticatedUser));
+        createdAt: new Date().toISOString(),
+      });
+
+      // Set user state
+      await fetchAndSetUserData(firebaseUser);
       
       // Redirect based on role
       if (role === 'farmer') {
@@ -124,38 +119,69 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         navigate('/buyer-dashboard');
       }
     } catch (error) {
-      console.error('Signup failed:', error);
+      console.error("Signup error:", error);
       throw error;
     }
   };
-  
+
+  const login = async (email: string, password: string) => {
+    try {
+      const userCredential = await signInWithEmailAndPassword(auth, email, password);
+      const firebaseUser = userCredential.user;
+      
+      // Fetch user data and update state
+      await fetchAndSetUserData(firebaseUser);
+      
+      // Get user role to determine redirect
+      const userDocRef = doc(db, 'users', firebaseUser.uid);
+      const userDoc = await getDoc(userDocRef);
+      
+      if (userDoc.exists()) {
+        const userData = userDoc.data();
+        // Redirect based on role
+        if (userData.role === 'farmer') {
+          navigate('/farmer-dashboard');
+        } else if (userData.role === 'buyer') {
+          navigate('/buyer-dashboard');
+        } else if (userData.role === 'admin') {
+          navigate('/admin-dashboard');
+        } else {
+          navigate('/profile');
+        }
+      } else {
+        navigate('/profile');
+      }
+    } catch (error) {
+      console.error("Login error:", error);
+      throw error;
+    }
+  };
+
   const updateProfile = async (profileData: Partial<User>) => {
     try {
       if (!user) {
         throw new Error('Not authenticated');
       }
       
-      // Get existing users
-      const storedUsers = JSON.parse(localStorage.getItem('farm-users') || '[]');
-      const userIndex = storedUsers.findIndex((u: any) => u.id === user.id);
+      // Update user data in Firestore
+      const userDocRef = doc(db, 'users', user.uid);
+      await updateDoc(userDocRef, {
+        ...profileData,
+        updatedAt: new Date().toISOString(),
+      });
       
-      if (userIndex === -1) {
-        throw new Error('User not found');
+      // If the name is being updated, also update it in Firebase Auth
+      if (profileData.name && auth.currentUser) {
+        await firebaseUpdateProfile(auth.currentUser, {
+          displayName: profileData.name,
+        });
       }
       
-      // Update user data, excluding sensitive fields like password
-      const { password, ...updatedUserData } = {
-        ...storedUsers[userIndex],
-        ...profileData
-      };
-      
-      storedUsers[userIndex] = { password, ...updatedUserData };
-      localStorage.setItem('farm-users', JSON.stringify(storedUsers));
-      
-      // Update current user session
-      const updatedUser = { ...user, ...profileData };
-      setUser(updatedUser);
-      localStorage.setItem('farm-user', JSON.stringify(updatedUser));
+      // Update local user state
+      setUser({
+        ...user,
+        ...profileData,
+      });
       
       return Promise.resolve();
     } catch (error) {
@@ -163,25 +189,31 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       throw error;
     }
   };
-  
-  const logout = () => {
-    setUser(null);
-    localStorage.removeItem('farm-user');
-    navigate('/');
+
+  const logout = async () => {
+    try {
+      await signOut(auth);
+      setUser(null);
+      setIsAuthenticated(false);
+      navigate('/');
+    } catch (error) {
+      console.error("Logout error:", error);
+      throw error;
+    }
   };
   
   return (
     <AuthContext.Provider 
       value={{ 
         user, 
-        isAuthenticated: !!user,
+        isAuthenticated,
         login, 
         signup, 
         logout,
         updateProfile
       }}
     >
-      {children}
+      {!loading && children}
     </AuthContext.Provider>
   );
 }

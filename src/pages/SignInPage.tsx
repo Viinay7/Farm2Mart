@@ -1,4 +1,3 @@
-
 import React, { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { AlertCircle, Loader2 } from 'lucide-react';
@@ -29,14 +28,34 @@ const SignInPage = () => {
     setIsLoading(true);
     
     try {
+      // Login using the function from AuthContext
+      // This will authenticate with Firebase and fetch user data from Firestore
       await login(email, password);
+      
       toast({
         title: "Success!",
         description: "You have successfully signed in.",
       });
-    } catch (err) {
-      setError('Invalid email or password. Please try again.');
-      console.error(err);
+      
+      // Note: Navigation to the dashboard is handled in the AuthContext login function
+    } catch (err: any) {
+      // Handle Firebase-specific error codes with user-friendly messages
+      if (err.code === 'auth/user-not-found') {
+        setError('No account found with this email. Please check your email or sign up.');
+      } else if (err.code === 'auth/wrong-password') {
+        setError('Invalid password. Please try again or reset your password.');
+      } else if (err.code === 'auth/too-many-requests') {
+        setError('Too many failed login attempts. Please try again later or reset your password.');
+      } else if (err.code === 'auth/user-disabled') {
+        setError('This account has been disabled. Please contact support.');
+      } else if (err.code === 'auth/invalid-email') {
+        setError('Please enter a valid email address.');
+      } else if (err.code === 'auth/network-request-failed') {
+        setError('Network error. Please check your internet connection.');
+      } else {
+        setError('Invalid email or password. Please try again.');
+      }
+      console.error("Login error:", err);
     } finally {
       setIsLoading(false);
     }
@@ -66,7 +85,7 @@ const SignInPage = () => {
                   <Input 
                     id="email"
                     type="email"
-                    placeholder=""
+                    placeholder="you@example.com"
                     value={email}
                     onChange={(e) => setEmail(e.target.value)}
                     disabled={isLoading}
