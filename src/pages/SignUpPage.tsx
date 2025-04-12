@@ -134,7 +134,7 @@ const SignUpPage = () => {
                     <Input 
                       id="name"
                       type="text"
-                      placeholder="John Doe"
+                      placeholder=""
                       value={name}
                       onChange={(e) => setName(e.target.value)}
                       disabled={isLoading}
@@ -147,7 +147,7 @@ const SignUpPage = () => {
                     <Input 
                       id="email"
                       type="email"
-                      placeholder="your@email.com"
+                      placeholder=""
                       value={email}
                       onChange={(e) => setEmail(e.target.value)}
                       disabled={isLoading}
